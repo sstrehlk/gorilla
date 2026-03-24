@@ -1,3 +1,4 @@
+import re
 import time
 from typing import Any, Optional
 
@@ -160,13 +161,22 @@ class BaseOpenVINOHandler(BaseHandler, EnforceOverrides):
     # Decoding helpers (prompting mode)
     # ------------------------------------------------------------------
 
+    @staticmethod
+    def _strip_thinking_tags(text: str) -> str:
+        """Remove <think>...</think> blocks produced by reasoning models (e.g. Qwen3)."""
+        return re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL).strip()
+
     @override
     def decode_ast(self, result, language, has_tool_call_tag):
-        return default_decode_ast_prompting(result, language, has_tool_call_tag)
+        return default_decode_ast_prompting(
+            self._strip_thinking_tags(result), language, has_tool_call_tag
+        )
 
     @override
     def decode_execute(self, result, has_tool_call_tag):
-        return default_decode_execute_prompting(result, has_tool_call_tag)
+        return default_decode_execute_prompting(
+            self._strip_thinking_tags(result), has_tool_call_tag
+        )
 
     # ------------------------------------------------------------------
     # Prompting pipeline methods (mirrors OSSHandler)

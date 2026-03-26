@@ -356,7 +356,7 @@ def load_file(file_path, sort_by_id: bool = False, use_lock: bool = True) -> lis
     result = []
 
     def _load_entries(input_path: str) -> None:
-        with open(input_path) as f:
+        with open(input_path, encoding='utf-8') as f:
             file = f.readlines()
             for line in file:
                 content = json.loads(line)

@@ -1,3 +1,4 @@
+import json
 import re
 import time
 from typing import Any, Optional
@@ -166,16 +167,48 @@ class BaseOpenVINOHandler(BaseHandler, EnforceOverrides):
         """Remove <think>...</think> blocks produced by reasoning models (e.g. Qwen3)."""
         return re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL).strip()
 
+    @staticmethod
+    def _extract_function_calls(text: str) -> str:
+        """Convert model output in 'commentary to=functions.X json{...}' format
+        to Python-style function call(s) expected by the AST decoder.
+
+        Handles one or more function calls in a single response.
+        Falls through unchanged if the pattern is not found.
+        """
+        pattern = re.compile(
+            r"to=functions\.([\w.]+)\s+json(\{.*?\})(?=\s*to=functions\.|\s*$)",
+            re.DOTALL,
+        )
+        matches = pattern.findall(text)
+        if not matches:
+            return text
+
+        calls = []
+        for func_name, json_str in matches:
+            try:
+                args = json.loads(json_str)
+                args_str = ", ".join(
+                    f"{k}={repr(v)}" for k, v in args.items()
+                )
+                calls.append(f"{func_name}({args_str})")
+            except json.JSONDecodeError:
+                return text  # fall through to default parsing
+        return ", ".join(calls)
+
+    def _preprocess_result(self, result: str) -> str:
+        text = self._strip_thinking_tags(result)
+        return self._extract_function_calls(text)
+
     @override
     def decode_ast(self, result, language, has_tool_call_tag):
         return default_decode_ast_prompting(
-            self._strip_thinking_tags(result), language, has_tool_call_tag
+            self._preprocess_result(result), language, has_tool_call_tag
         )
 
     @override
     def decode_execute(self, result, has_tool_call_tag):
         return default_decode_execute_prompting(
-            self._strip_thinking_tags(result), has_tool_call_tag
+            self._preprocess_result(result), has_tool_call_tag
         )
 
     # ------------------------------------------------------------------

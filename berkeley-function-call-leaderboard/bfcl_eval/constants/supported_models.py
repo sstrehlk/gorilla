@@ -189,4 +189,6 @@ SUPPORTED_MODELS = [
     # Generic OpenVINO in-process model entries
     "openvino-optimum",
     "openvino-genai",
+    "openvino-genai-FC",
+    "openvino-optimum-FC",
 ]

@@ -62,9 +62,12 @@ class OpenVINOGenAIHandler(BaseOpenVINOHandler):
 
     @override
     def _load_model(self, model_path: str, device: str = "CPU") -> None:
-        import openvino_genai  # noqa: F401 – validated at import time
-
-        self._pipeline = openvino_genai.LLMPipeline(model_path, device)
+        import openvino_genai
+        scheduler_config = openvino_genai.SchedulerConfig()
+        scheduler_config.enable_prefix_caching = True
+        self._pipeline = openvino_genai.LLMPipeline(
+            model_path, device, config={"scheduler_config": scheduler_config}
+        )
 
     @override
     def _unload_model(self) -> None:

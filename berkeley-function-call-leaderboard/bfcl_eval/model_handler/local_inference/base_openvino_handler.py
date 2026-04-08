@@ -362,6 +362,7 @@ class BaseOpenVINOHandler(BaseHandler, EnforceOverrides):
                 tools=tools if tools else None,
                 add_generation_prompt=True,
                 tokenize=False,
+                enable_thinking=False,
             )
         except Exception:
             # Fallback: template does not support tools – render without

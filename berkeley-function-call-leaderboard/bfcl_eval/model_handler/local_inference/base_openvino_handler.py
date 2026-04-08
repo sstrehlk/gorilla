@@ -202,6 +202,13 @@ class BaseOpenVINOHandler(BaseHandler, EnforceOverrides):
             idx = text.find("assistantcommentary")
             if idx != -1:
                 text = text[idx + len("assistantcommentary"):]
+            else:
+                # Fallback: bare 'final*' markers without 'assistant' prefix
+                for marker in ("finalanalysis", "finalcommentary"):
+                    idx = text.rfind(marker)
+                    if idx != -1:
+                        text = text[idx + len(marker):]
+                        break
         return text.strip()
 
     @staticmethod

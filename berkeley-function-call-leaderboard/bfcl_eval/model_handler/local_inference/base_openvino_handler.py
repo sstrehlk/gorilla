@@ -182,23 +182,45 @@ class BaseOpenVINOHandler(BaseHandler, EnforceOverrides):
     def _strip_thinking_tags(text: str) -> str:
         """Remove <think>...</think> blocks produced by reasoning models (e.g. Qwen3).
         Also handles unclosed <think> blocks (when generation was cut off mid-thought).
+        Also strips gpt-oss-20b style 'analysis...assistantfinal<answer>' preamble.
         """
         # Remove complete <think>...</think> blocks
         text = re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL)
         # Remove unclosed <think> block (truncated generation)
         text = re.sub(r"<think>.*$", "", text, flags=re.DOTALL)
+        # gpt-oss-20b outputs chain-of-thought followed by "assistantfinal<answer>"
+        # or "assistantcommentary to=functions...". Extract only the final answer.
+        # For assistantfinal: use rfind to get the definitive last output.
+        # For assistantcommentary: use find (first occurrence) so that all
+        # subsequent 'assistantcommentary to=functions...' blocks are retained
+        # for the regex to extract (handles multi-call steps like
+        # 'assistantcommentary to=X json{...}assistantanalysis...assistantcommentary to=Y json{...}').
+        idx = text.rfind("assistantfinal")
+        if idx != -1:
+            text = text[idx + len("assistantfinal"):]
+        else:
+            idx = text.find("assistantcommentary")
+            if idx != -1:
+                text = text[idx + len("assistantcommentary"):]
         return text.strip()
 
     @staticmethod
     def _extract_function_calls(text: str) -> str:
-        """Convert model output in 'commentary to=functions.X json{...}' format
-        to Python-style function call(s) expected by the AST decoder.
+        """Convert model output in 'to=functions.X ...' format to Python-style
+        function call(s) expected by the AST decoder.
 
-        Handles one or more function calls in a single response.
+        Handles (with and without the 'functions.' prefix):
+          - 'to=functions.X json{...}'    (space + json keyword)
+          - 'to=functions.X commentary{...}'  (space + commentary keyword)
+          - 'to=functions.Xjson{...}'     (json directly attached to name)
+          - 'to=functions.Xcommentary{...}'   (commentary directly attached)
+          - 'to=X json{...}'              (no functions. prefix, space + json)
+          - 'to=Xjson{...}'               (no functions. prefix, directly attached)
+
         Falls through unchanged if the pattern is not found.
         """
         pattern = re.compile(
-            r"to=functions\.([\w.]+)\s+json(\{.*?\})(?=\s*to=functions\.|\s*$)",
+            r"to=(?:functions\.)?([\.\w.]+?)(?:json|commentary|\s+(?:json|commentary))(\{.*?\})",
             re.DOTALL,
         )
         matches = pattern.findall(text)

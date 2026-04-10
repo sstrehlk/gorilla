@@ -217,17 +217,22 @@ class BaseOpenVINOHandler(BaseHandler, EnforceOverrides):
         function call(s) expected by the AST decoder.
 
         Handles (with and without the 'functions.' prefix):
-          - 'to=functions.X json{...}'    (space + json keyword)
+          - 'to=functions.X json{...}'        (space + json keyword)
           - 'to=functions.X commentary{...}'  (space + commentary keyword)
-          - 'to=functions.Xjson{...}'     (json directly attached to name)
+          - 'to=functions.Xjson{...}'         (json directly attached to name)
           - 'to=functions.Xcommentary{...}'   (commentary directly attached)
-          - 'to=X json{...}'              (no functions. prefix, space + json)
-          - 'to=Xjson{...}'               (no functions. prefix, directly attached)
+          - 'to=X json{...}'                  (no functions. prefix, space + json)
+          - 'to=Xjson{...}'                   (no functions. prefix, directly attached)
+          - 'to=X {}'                          (bare space + braces, no keyword)
+          - JSON bodies with one level of nested braces: {"key": {"nested": "val"}}
 
         Falls through unchanged if the pattern is not found.
         """
+        # JSON body: handles one level of nested braces (e.g. {"parameters":{}})
+        _JSON = r"\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\}"
         pattern = re.compile(
-            r"to=(?:functions\.)?([\.\w.]+?)(?:json|commentary|\s+(?:json|commentary))(\{.*?\})",
+            r"to=(?:functions\.)?([\.\w]+?)(?:json|commentary|\s+(?:json|commentary)|\s*(?=\{))("
+            + _JSON + r")",
             re.DOTALL,
         )
         matches = pattern.findall(text)

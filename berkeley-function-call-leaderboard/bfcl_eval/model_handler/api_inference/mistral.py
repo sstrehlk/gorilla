@@ -15,7 +15,6 @@ from bfcl_eval.model_handler.utils import (
     retry_with_backoff,
     system_prompt_pre_processing_chat_model,
 )
-from mistralai import Mistral
 
 
 class MistralHandler(BaseHandler):
@@ -30,6 +29,13 @@ class MistralHandler(BaseHandler):
         super().__init__(model_name, temperature, registry_name, is_fc_model, **kwargs)
         self.model_style = ModelStyle.MISTRAL
 
+        try:
+            from mistralai import Mistral
+        except ImportError:
+            raise ImportError(
+                "mistralai package is required for MistralHandler. "
+                "Install it with: pip install mistralai"
+            )
         self.client = Mistral(api_key=os.getenv("MISTRAL_API_KEY"))
 
     def decode_ast(self, result, language, has_tool_call_tag):

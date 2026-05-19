@@ -188,6 +188,12 @@ class BaseOpenVINOHandler(BaseHandler, EnforceOverrides):
         text = re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL)
         # Remove unclosed <think> block (truncated generation)
         text = re.sub(r"<think>.*$", "", text, flags=re.DOTALL)
+        # Handle models that omit the opening <think> tag but still emit </think>
+        # (e.g. Qwen3 via openvino-genai where <think> is part of the chat template).
+        # Strip everything up to and including the last </think>.
+        idx = text.rfind("</think>")
+        if idx != -1:
+            text = text[idx + len("</think>"):]
         # gpt-oss-20b outputs chain-of-thought followed by "assistantfinal<answer>"
         # or "assistantcommentary to=functions...". Extract only the final answer.
         # For assistantfinal: use rfind to get the definitive last output.

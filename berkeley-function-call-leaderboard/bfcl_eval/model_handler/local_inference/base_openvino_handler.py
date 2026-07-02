@@ -3,10 +3,11 @@ import re
 import time
 from typing import Any, Optional
 
-from bfcl_eval.constants.enums import ModelStyle
+from bfcl_eval.constants.enums import ModelStyle, ReturnFormat
 from bfcl_eval.constants.type_mappings import GORILLA_TO_OPENAPI
 from bfcl_eval.model_handler.base_handler import BaseHandler
 from bfcl_eval.model_handler.utils import (
+    convert_to_function_call,
     convert_to_tool,
     default_decode_ast_prompting,
     default_decode_execute_prompting,
@@ -60,12 +61,7 @@ class BaseOpenVINOHandler(BaseHandler, EnforceOverrides):
         include_input_log: bool,
         exclude_state_log: bool,
     ):
-        if contain_multi_turn_interaction(test_entry["id"]):
-            return self.inference_multi_turn_prompting(
-                test_entry, include_input_log, exclude_state_log
-            )
-        else:
-            return self.inference_single_turn_prompting(test_entry, include_input_log)
+        return super().inference(test_entry, include_input_log, exclude_state_log)
 
     # ------------------------------------------------------------------
     # Model lifecycle (called by _llm_response_generation.py)
@@ -263,12 +259,16 @@ class BaseOpenVINOHandler(BaseHandler, EnforceOverrides):
 
     @override
     def decode_ast(self, result, language, has_tool_call_tag):
+        if self.is_fc_model and isinstance(result, list):
+            return result
         return default_decode_ast_prompting(
             self._preprocess_result(result), language, has_tool_call_tag
         )
 
     @override
     def decode_execute(self, result, has_tool_call_tag):
+        if self.is_fc_model and isinstance(result, list):
+            return convert_to_function_call(result)
         return default_decode_execute_prompting(
             self._preprocess_result(result), has_tool_call_tag
         )
@@ -387,6 +387,10 @@ class BaseOpenVINOHandler(BaseHandler, EnforceOverrides):
     def _compile_tools(self, inference_data: dict, test_entry: dict) -> dict:
         functions: list = test_entry["function"]
         tools = convert_to_tool(functions, GORILLA_TO_OPENAPI, self.model_style)
+        tools = [
+            tool if "function" in tool else {"type": "function", "function": tool}
+            for tool in tools
+        ]
         inference_data["tools"] = tools
         return inference_data
 
@@ -437,42 +441,81 @@ class BaseOpenVINOHandler(BaseHandler, EnforceOverrides):
         # Strip thinking tags (e.g. Qwen3 reasoning models)
         text = self._strip_thinking_tags(text)
 
-        # Try to extract a JSON list / dict of tool calls from the response
-        tool_calls_json = None
-        # Match first JSON array or object in the response
-        json_match = re.search(r"(\[.*?\]|\{.*?\})", text, re.DOTALL)
-        if json_match:
-            try:
-                tool_calls_json = json.loads(json_match.group(0))
-            except json.JSONDecodeError:
-                pass
+        model_responses = None
+        tool_call_ids = []
 
-        if tool_calls_json is not None:
-            if isinstance(tool_calls_json, dict):
-                tool_calls_json = [tool_calls_json]
-            # Normalise: each item should be {"name": ..., "arguments": {...}}
-            model_responses = []
-            tool_call_ids = []
-            for idx, call in enumerate(tool_calls_json):
-                name = call.get("name") or call.get("function", {}).get("name", "")
-                arguments = call.get("arguments") or call.get("function", {}).get("arguments", {})
-                if isinstance(arguments, str):
-                    try:
-                        arguments = json.loads(arguments)
-                    except json.JSONDecodeError:
-                        pass
-                model_responses.append({name: arguments})
-                tool_call_ids.append(f"call_{idx}")
-        else:
+        extracted_text = self._extract_function_calls(text)
+        if extracted_text != text:
+            try:
+                model_responses = default_decode_ast_prompting(
+                    extracted_text, ReturnFormat.PYTHON, has_tool_call_tag=False
+                )
+            except Exception:
+                model_responses = extracted_text
+
+        if model_responses is None:
+            # Try to extract a JSON list / dict of tool calls from the response
+            tool_calls_json = None
+            decoder = json.JSONDecoder()
+            for json_start in re.finditer(r"[\[{]", text):
+                try:
+                    tool_calls_json, _ = decoder.raw_decode(text[json_start.start():])
+                    break
+                except json.JSONDecodeError:
+                    continue
+
+            if tool_calls_json is not None:
+                if isinstance(tool_calls_json, dict):
+                    tool_calls_json = [tool_calls_json]
+                # Normalise: each item should be {"name": ..., "arguments": {...}}
+                model_responses = []
+                for call in tool_calls_json:
+                    if not isinstance(call, dict):
+                        continue
+                    name = call.get("name") or call.get("function", {}).get("name", "")
+                    arguments = call.get("arguments") or call.get("function", {}).get("arguments", {})
+                    if isinstance(arguments, str):
+                        try:
+                            arguments = json.loads(arguments)
+                        except json.JSONDecodeError:
+                            pass
+                    if name:
+                        model_responses.append({name: arguments})
+
+                if not model_responses:
+                    model_responses = None
+
+        if model_responses is None:
             model_responses = text
-            tool_call_ids = []
+        elif isinstance(model_responses, list):
+            tool_call_ids = [f"call_{idx}" for idx, _ in enumerate(model_responses)]
+
+        tool_calls = []
+        if isinstance(model_responses, list):
+            for tool_call_id, response in zip(tool_call_ids, model_responses):
+                name = list(response.keys())[0]
+                arguments = response[name]
+                tool_calls.append(
+                    {
+                        "id": tool_call_id,
+                        "type": "function",
+                        "function": {
+                            "name": name,
+                            "arguments": arguments,
+                        },
+                    }
+                )
+
+        message_for_chat_history = {
+            "role": "assistant",
+            "content": text,
+        }
+        if tool_calls:
+            message_for_chat_history["tool_calls"] = tool_calls
 
         return {
             "model_responses": model_responses,
-            "model_responses_message_for_chat_history": {
-                "role": "assistant",
-                "content": text,
-            },
+            "model_responses_message_for_chat_history": message_for_chat_history,
             "tool_call_ids": tool_call_ids,
             "input_token": api_response["input_tokens"],
             "output_token": api_response["output_tokens"],

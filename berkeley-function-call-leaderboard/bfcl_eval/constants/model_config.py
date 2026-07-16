@@ -68,6 +68,8 @@ from bfcl_eval.model_handler.local_inference.salesforce_qwen import (
     SalesforceQwenHandler,
 )
 from bfcl_eval.model_handler.local_inference.think_agent import ThinkAgentHandler
+from bfcl_eval.model_handler.local_inference.openvino_optimum import OpenVINOOptimumHandler
+from bfcl_eval.model_handler.local_inference.openvino_genai import OpenVINOGenAIHandler
 
 # -----------------------------------------------------------------------------
 # A mapping of model identifiers to their respective model configurations.
@@ -2188,6 +2190,63 @@ third_party_inference_model_map = {
         input_price=0.18,
         output_price=0.2,
         is_fc_model=False,
+        underscore_to_dot=False,
+    ),
+    # -------------------------------------------------------------------------
+    # OpenVINO IR models
+    # -------------------------------------------------------------------------
+    # These entries represent models available as pre-converted OpenVINO IR files.
+    # By default, OpenAICompletionsHandler is used, which expects an
+    # Generic OpenVINO in-process model entries.
+    # Pass --local-model-path to point to a directory containing OpenVINO IR files.
+    # Pass --openvino-device to select the compute device (default: CPU).
+    # -------------------------------------------------------------------------
+    "openvino-optimum": ModelConfig(
+        model_name="openvino-optimum",
+        display_name="OpenVINO (optimum-intel)",
+        url="https://github.com/huggingface/optimum-intel",
+        org="OpenVINO",
+        license="apache-2.0",
+        model_handler=OpenVINOOptimumHandler,
+        input_price=None,
+        output_price=None,
+        is_fc_model=False,
+        underscore_to_dot=False,
+    ),
+    "openvino-genai": ModelConfig(
+        model_name="openvino-genai",
+        display_name="OpenVINO (openvino-genai)",
+        url="https://github.com/openvinotoolkit/openvino.genai",
+        org="OpenVINO",
+        license="apache-2.0",
+        model_handler=OpenVINOGenAIHandler,
+        input_price=None,
+        output_price=None,
+        is_fc_model=False,
+        underscore_to_dot=False,
+    ),
+    "openvino-genai-FC": ModelConfig(
+        model_name="openvino-genai",
+        display_name="OpenVINO (openvino-genai, FC)",
+        url="https://github.com/openvinotoolkit/openvino.genai",
+        org="OpenVINO",
+        license="apache-2.0",
+        model_handler=OpenVINOGenAIHandler,
+        input_price=None,
+        output_price=None,
+        is_fc_model=True,
+        underscore_to_dot=False,
+    ),
+    "openvino-optimum-FC": ModelConfig(
+        model_name="openvino-optimum",
+        display_name="OpenVINO (optimum-intel, FC)",
+        url="https://github.com/huggingface/optimum-intel",
+        org="OpenVINO",
+        license="apache-2.0",
+        model_handler=OpenVINOOptimumHandler,
+        input_price=None,
+        output_price=None,
+        is_fc_model=True,
         underscore_to_dot=False,
     ),
     # Via Qwen Agent Framework

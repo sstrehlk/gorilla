@@ -21,6 +21,7 @@ from bfcl_eval.constants.model_config import MODEL_CONFIG_MAPPING
 from bfcl_eval.eval_checker.eval_runner_helper import load_file
 from bfcl_eval.model_handler.base_handler import BaseHandler
 from bfcl_eval.model_handler.local_inference.base_oss_handler import OSSHandler
+from bfcl_eval.model_handler.local_inference.base_openvino_handler import BaseOpenVINOHandler
 from bfcl_eval.utils import *
 from tqdm import tqdm
 
@@ -74,6 +75,19 @@ def get_args():
         type=int,
         default=None,
         help="Specify the maximum LoRA rank for vLLM backend.",
+    )
+    parser.add_argument(
+        "--openvino-device",
+        type=str,
+        default="CPU",
+        help="OpenVINO compute device for OpenVINO IR models (e.g. CPU, GPU, NPU). "
+             "Only used when the selected model handler is an OpenVINO-based handler.",
+    )
+    parser.add_argument(
+        "--limit",
+        type=int,
+        default=0,
+        help="Maximum number of test cases to run. 0 means no limit (run all).",
     )
     args = parser.parse_args()
     print(f"Parsed arguments: {args}")
@@ -226,6 +240,7 @@ def generate_results(args, model_name, test_cases_total):
     if isinstance(handler, OSSHandler):
         handler: OSSHandler
         is_oss_model = True
+        is_openvino_model = False
         # For OSS models, if the user didn't explicitly set the number of threads,
         # we default to 100 threads to speed up the inference.
         num_threads = (
@@ -233,9 +248,17 @@ def generate_results(args, model_name, test_cases_total):
             if args.num_threads is not None
             else LOCAL_SERVER_MAX_CONCURRENT_REQUEST
         )
+    elif isinstance(handler, BaseOpenVINOHandler):
+        handler: BaseOpenVINOHandler
+        is_oss_model = False
+        is_openvino_model = True
+        # OpenVINO runs inside the current process; the model itself uses multiple
+        # threads internally, so default to a single inference thread.
+        num_threads = args.num_threads if args.num_threads is not None else 1
     else:
         handler: BaseHandler
         is_oss_model = False
+        is_openvino_model = False
         num_threads = args.num_threads if args.num_threads is not None else 1
 
     # Use a separate thread to write the results to the file to avoid concurrent IO issues
@@ -264,6 +287,11 @@ def generate_results(args, model_name, test_cases_total):
                 lora_modules=args.lora_modules,
                 enable_lora=args.enable_lora,
                 max_lora_rank=args.max_lora_rank,
+            )
+        elif is_openvino_model:
+            handler.load_model(
+                local_model_path=args.local_model_path,
+                openvino_device=args.openvino_device,
             )
 
         # ───── dependency bookkeeping ──────────────────────────────
@@ -352,7 +380,7 @@ def generate_results(args, model_name, test_cases_total):
         write_queue.put(None)
         writer_thread.join()
 
-        if is_oss_model:
+        if is_oss_model or is_openvino_model:
             handler.shutdown_local_server()
 
 
@@ -411,6 +439,11 @@ def main(args):
             all_test_categories,
             deepcopy(all_test_entries_involved),
         )
+
+        # Apply --limit to restrict the number of test cases
+        if getattr(args, "limit", 0) > 0 and len(test_cases_total) > args.limit:
+            tqdm.write(f"Limiting test cases from {len(test_cases_total)} to {args.limit}")
+            test_cases_total = test_cases_total[: args.limit]
 
         if len(test_cases_total) == 0:
             tqdm.write(

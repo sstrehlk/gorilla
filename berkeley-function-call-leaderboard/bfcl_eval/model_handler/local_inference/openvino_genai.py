@@ -102,6 +102,16 @@ class OpenVINOGenAIHandler(BaseOpenVINOHandler):
 
         config = openvino_genai.GenerationConfig()
         config.max_new_tokens = max_new_tokens
+        # `formatted_prompt` is already a fully rendered chat-template string
+        # (built via self.tokenizer.apply_chat_template in _query_FC/_format_prompt).
+        # openvino_genai.GenerationConfig.apply_chat_template defaults to True, which
+        # causes both LLMPipeline/ContinuousBatchingPipeline (pipeline_base.cpp) and
+        # VLMPipeline (inputs_embedder.cpp) to wrap this already-rendered string as a
+        # NEW {"role": "user", "content": formatted_prompt} message and apply the chat
+        # template a SECOND time on top of it. OVMS explicitly sets this to false
+        # (template is applied on the serving side) - we must match that here,
+        # otherwise the model receives a corrupted, doubly-templated prompt.
+        config.apply_chat_template = False
 
         if self.temperature > 0.01:
             config.temperature = self.temperature

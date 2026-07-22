@@ -1,3 +1,5 @@
+from typing import Optional
+
 from bfcl_eval.model_handler.local_inference.base_openvino_handler import (
     BaseOpenVINOHandler,
 )
@@ -61,24 +63,29 @@ class OpenVINOGenAIHandler(BaseOpenVINOHandler):
         self._pipeline = None
 
     @override
-    def _load_model(self, model_path: str, device: str = "CPU") -> None:
+    def _load_model(
+        self, model_path: str, device: str = "CPU", device_properties: Optional[dict] = None
+    ) -> None:
         import openvino_genai
         import os
+
+        device_properties = device_properties or {}
 
         # Detect VLM models by presence of vision embeddings model file
         is_vlm = os.path.exists(os.path.join(model_path, "openvino_vision_embeddings_model.xml"))
         if is_vlm:
-            print("[INFO] Vision model detected. Using VLMPipeline.")
-            self._pipeline = openvino_genai.VLMPipeline(model_path, device)
+            print(f"[INFO] Vision model detected. Using VLMPipeline. device_properties={device_properties}")
+            self._pipeline = openvino_genai.VLMPipeline(model_path, device, **device_properties)
             self._is_vlm = True
             return
 
         self._is_vlm = False
         scheduler_config = openvino_genai.SchedulerConfig()
         scheduler_config.enable_prefix_caching = True
+        pipeline_config = {"scheduler_config": scheduler_config, **device_properties}
         try:
             self._pipeline = openvino_genai.LLMPipeline(
-                model_path, device, config={"scheduler_config": scheduler_config}
+                model_path, device, config=pipeline_config
             )
         except RuntimeError as e:
             if "unregistered_parameters" in str(e) or "beam_idx" in str(e) or "sampler_num_threads" in str(e):
@@ -88,7 +95,7 @@ class OpenVINOGenAIHandler(BaseOpenVINOHandler):
                     f"[WARNING] PA backend failed ({e}). "
                     "Retrying without SchedulerConfig (no prefix caching)."
                 )
-                self._pipeline = openvino_genai.LLMPipeline(model_path, device)
+                self._pipeline = openvino_genai.LLMPipeline(model_path, device, **device_properties)
             else:
                 raise
 
@@ -105,12 +112,12 @@ class OpenVINOGenAIHandler(BaseOpenVINOHandler):
         # `formatted_prompt` is already a fully rendered chat-template string
         # (built via self.tokenizer.apply_chat_template in _query_FC/_format_prompt).
         # openvino_genai.GenerationConfig.apply_chat_template defaults to True, which
-        # causes both LLMPipeline/ContinuousBatchingPipeline (pipeline_base.cpp) and
+        # causes LLMPipeline/ContinuousBatchingPipeline (pipeline_base.cpp) and
         # VLMPipeline (inputs_embedder.cpp) to wrap this already-rendered string as a
         # NEW {"role": "user", "content": formatted_prompt} message and apply the chat
         # template a SECOND time on top of it. OVMS explicitly sets this to false
-        # (template is applied on the serving side) - we must match that here,
-        # otherwise the model receives a corrupted, doubly-templated prompt.
+        # (template is applied on the serving side). We must match that here to produce
+        # identical model inputs and comparable accuracy results.
         config.apply_chat_template = False
 
         if self.temperature > 0.01:

@@ -1,3 +1,5 @@
+from typing import Optional
+
 from bfcl_eval.model_handler.local_inference.base_openvino_handler import (
     BaseOpenVINOHandler,
 )
@@ -59,15 +61,21 @@ class OpenVINOOptimumHandler(BaseOpenVINOHandler):
         self._ov_model = None
 
     @override
-    def _load_model(self, model_path: str, device: str = "CPU") -> None:
+    def _load_model(
+        self, model_path: str, device: str = "CPU", device_properties: Optional[dict] = None
+    ) -> None:
         from optimum.intel import OVModelForCausalLM
 
-        self._ov_model = OVModelForCausalLM.from_pretrained(
-            model_path,
+        load_kwargs: dict = dict(
             export=False,  # load pre-converted OpenVINO IR files
             device=device,
             trust_remote_code=True,
         )
+        if device_properties:
+            print(f"[INFO] Applying OpenVINO device properties: {device_properties}")
+            load_kwargs["ov_config"] = device_properties
+
+        self._ov_model = OVModelForCausalLM.from_pretrained(model_path, **load_kwargs)
 
     @override
     def _unload_model(self) -> None:

@@ -1,4 +1,5 @@
 import json
+import os
 import re
 import time
 from typing import Any, Optional
@@ -77,6 +78,7 @@ class BaseOpenVINOHandler(BaseHandler, EnforceOverrides):
         self,
         local_model_path: Optional[str] = None,
         openvino_device: str = "CPU",
+        ov_config: Optional[str] = None,
     ) -> None:
         """
         Load the tokenizer and the backend-specific model into memory.
@@ -87,6 +89,11 @@ class BaseOpenVINOHandler(BaseHandler, EnforceOverrides):
                 self.model_name_huggingface is used (works when the model is cached in
                 HF_HOME or when the backend supports HF hub download, e.g. optimum-intel).
             openvino_device: OpenVINO compute device – "CPU", "GPU", or "NPU".
+            ov_config: Optional path to a JSON file (or a JSON string) with OpenVINO device
+                properties, in the same shape used by the pnp-validation testplan configs:
+                ``{"config": {"DEVICE_PROPERTIES": {"<DEVICE>": {...}}}}``. The properties
+                matching ``openvino_device`` (or its device family, e.g. "GPU" for "GPU.0")
+                are extracted and passed to ``_load_model`` as ``device_properties``.
         """
         from transformers import AutoConfig, AutoTokenizer
 
@@ -118,8 +125,47 @@ class BaseOpenVINOHandler(BaseHandler, EnforceOverrides):
 
         print(f"Max context length: {self.max_context_length}")
 
-        self._load_model(model_path, device=openvino_device)
+        device_properties = self._parse_ov_config(ov_config, openvino_device)
+        if device_properties:
+            print(f"Applying OpenVINO device properties for {openvino_device}: {device_properties}")
+
+        self._load_model(model_path, device=openvino_device, device_properties=device_properties)
         print(f"OpenVINO model loaded on device: {openvino_device}")
+
+    @staticmethod
+    def _parse_ov_config(ov_config: Optional[str], device: str) -> dict:
+        """Parse an OpenVINO config file/JSON string and return the flat device-property
+        dict applicable to ``device``.
+
+        Expected shape (same as the pnp-validation testplan ``testplan_ov_config.json``):
+        ``{"config": {"DEVICE_PROPERTIES": {"GPU": {"ATTENTION_BACKEND": "SDPA"}}}}``.
+        The device family (e.g. "GPU" for a device string of "GPU.0") is used as a
+        fallback lookup key if an exact match (e.g. "GPU.0") is not present. A flat dict
+        with no "DEVICE_PROPERTIES" wrapper is also accepted and applied as-is. Returns
+        ``{}`` if ``ov_config`` is empty or nothing matches.
+        """
+        if not ov_config:
+            return {}
+
+        if os.path.isfile(ov_config):
+            with open(ov_config, "r", encoding="utf-8") as ov_config_file:
+                raw = json.load(ov_config_file)
+        else:
+            raw = json.loads(ov_config)
+
+        config = raw.get("config", raw) if isinstance(raw, dict) else {}
+        if not isinstance(config, dict):
+            return {}
+
+        device_properties = config.get("DEVICE_PROPERTIES")
+        if isinstance(device_properties, dict):
+            device_key = device.upper()
+            if device_key in device_properties:
+                return dict(device_properties[device_key])
+            device_family = device_key.split(".")[0]
+            return dict(device_properties.get(device_family, {}))
+
+        return {k: v for k, v in config.items() if k != "DEVICE_PROPERTIES"}
 
     def shutdown_local_server(self) -> None:
         """Release model resources (mirrors the OSSHandler interface)."""
@@ -130,8 +176,16 @@ class BaseOpenVINOHandler(BaseHandler, EnforceOverrides):
     # Abstract interface for subclasses
     # ------------------------------------------------------------------
 
-    def _load_model(self, model_path: str, device: str = "CPU") -> None:
-        """Load the backend-specific model.  Must be implemented by subclasses."""
+    def _load_model(
+        self, model_path: str, device: str = "CPU", device_properties: Optional[dict] = None
+    ) -> None:
+        """Load the backend-specific model.  Must be implemented by subclasses.
+
+        ``device_properties`` (parsed from an optional ``--ov-config`` file/string, see
+        ``load_model``/``_parse_ov_config``) contains OpenVINO plugin properties
+        (e.g. ``ATTENTION_BACKEND``, ``INFERENCE_PRECISION_HINT``, ``KV_CACHE_PRECISION``)
+        that subclasses should apply when constructing their pipeline/model.
+        """
         raise NotImplementedError
 
     def _unload_model(self) -> None:

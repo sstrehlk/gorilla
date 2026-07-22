@@ -84,6 +84,15 @@ def get_args():
              "Only used when the selected model handler is an OpenVINO-based handler.",
     )
     parser.add_argument(
+        "--ov-config",
+        dest="ov_config",
+        type=str,
+        default=None,
+        help="Path to a JSON file (or a JSON string) with OpenVINO device properties to apply "
+             "to OpenVINO-based handlers, e.g. {\"config\": {\"DEVICE_PROPERTIES\": {\"GPU\": "
+             "{\"ATTENTION_BACKEND\": \"SDPA\"}}}}. Only used by OpenVINO-based handlers.",
+    )
+    parser.add_argument(
         "--limit",
         type=int,
         default=0,
@@ -292,6 +301,7 @@ def generate_results(args, model_name, test_cases_total):
             handler.load_model(
                 local_model_path=args.local_model_path,
                 openvino_device=args.openvino_device,
+                ov_config=getattr(args, "ov_config", None),
             )
 
         # ───── dependency bookkeeping ──────────────────────────────

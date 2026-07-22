@@ -168,6 +168,13 @@ def generate(
         "--openvino-device",
         help="OpenVINO compute device for OpenVINO IR models (e.g. CPU, GPU, NPU).",
     ),
+    ov_config: Optional[str] = typer.Option(
+        None,
+        "--ov-config",
+        help="Path to a JSON file (or a JSON string) with OpenVINO device properties to apply "
+             "to OpenVINO-based handlers, e.g. {\"config\": {\"DEVICE_PROPERTIES\": {\"GPU\": "
+             "{\"ATTENTION_BACKEND\": \"SDPA\"}}}}. Only used by OpenVINO-based handlers.",
+    ),
     limit: int = typer.Option(
         0,
         "--limit",
@@ -197,6 +204,7 @@ def generate(
         max_lora_rank=max_lora_rank,
         lora_modules=lora_modules,
         openvino_device=openvino_device,
+        ov_config=ov_config,
         limit=limit,
     )
     load_dotenv(dotenv_path=DOTENV_PATH, verbose=True, override=True)  # Load the .env file

@@ -107,7 +107,18 @@ class OpenVINOGenAIHandler(BaseOpenVINOHandler):
     def _generate(self, formatted_prompt: str, max_new_tokens: int) -> str:
         import openvino_genai
 
-        config = openvino_genai.GenerationConfig()
+        # Start from the pipeline's own default GenerationConfig (loaded from the
+        # model's generation_config.json at pipeline construction) instead of a
+        # bare openvino_genai.GenerationConfig(). The bare default constructor has
+        # eos_token_id = -1 and empty stop_token_ids, and since we pass this config
+        # object directly to generate() (not via set_generation_config()), the
+        # pipeline uses it as-is with no backfilling from the model's real EOS
+        # token(s). That left generation with no stop condition other than
+        # max_new_tokens, causing runaway/degenerate repetition until the token
+        # budget was exhausted on every turn. Basing off get_generation_config()
+        # preserves the model's eos_token_id/stop_token_ids (and sampling
+        # defaults) while we still override what we need below.
+        config = self._pipeline.get_generation_config()
         config.max_new_tokens = max_new_tokens
         # `formatted_prompt` is already a fully rendered chat-template string
         # (built via self.tokenizer.apply_chat_template in _query_FC/_format_prompt).

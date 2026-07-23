@@ -358,10 +358,13 @@ class BaseOpenVINOHandler(BaseHandler, EnforceOverrides):
             # Prompt already exceeds context window; request a minimal budget
             max_new_tokens = 1000
         else:
-            # Use up to 16384 tokens to accommodate reasoning models (e.g. Qwen3)
-            # that generate a long <think> block before the actual answer.
+            # Cap at 2048 tokens to match OVMS's own BFCL test setup, which pins
+            # max_completion_tokens=2048 for every request (see OpenAICompletionsHandler
+            # in model_server/demos/continuous_batching/accuracy/gorilla.patch). A much
+            # larger budget (previously 16384) let occasional degenerate/repetitive
+            # generations run for a very long time before being cut off.
             max_new_tokens = min(
-                16384,
+                2048,
                 self.max_context_length - input_token_count - 2,
             )
 
@@ -474,7 +477,10 @@ class BaseOpenVINOHandler(BaseHandler, EnforceOverrides):
         if self.max_context_length < input_token_count + 2:
             max_new_tokens = 1000
         else:
-            max_new_tokens = min(16384, self.max_context_length - input_token_count - 2)
+            # Cap at 2048 tokens to match OVMS's own BFCL test setup (see
+            # OpenAICompletionsHandler.max_completion_tokens in
+            # model_server/demos/continuous_batching/accuracy/gorilla.patch).
+            max_new_tokens = min(2048, self.max_context_length - input_token_count - 2)
 
         start_time = time.time()
         generated_text = self._generate(formatted_prompt, max_new_tokens)

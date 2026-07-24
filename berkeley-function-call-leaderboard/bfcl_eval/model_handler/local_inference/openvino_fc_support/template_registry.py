@@ -9,6 +9,10 @@ def _template_name_for_model(model_path: str) -> str | None:
         return "phi4"
     if "qwen3-coder" in model_path_lower or "qwen3coder" in model_path_lower:
         return "qwen3coder"
+    if "qwen3.6" in model_path_lower or "qwen36" in model_path_lower:
+        return "qwen36"
+    if "gemma-4" in model_path_lower or "gemma4" in model_path_lower:
+        return "gemma4"
     return None
 
 

@@ -246,6 +246,13 @@ class BaseOpenVINOHandler(BaseHandler, EnforceOverrides):
         text = re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL)
         # Remove unclosed <think> block (truncated generation)
         text = re.sub(r"<think>.*$", "", text, flags=re.DOTALL)
+        # Gemma-4 wraps its response in a "channel" delimited by dedicated
+        # start/end token IDs (see OVMS's Gemma4ReasoningParser). Those tokens
+        # are silently dropped during detokenization, so the only visible
+        # leftover is a literal "thought\n" line-prefix (sometimes doubled)
+        # at the very start of the text. Strip it so it doesn't leak into the
+        # final answer/tool-call text.
+        text = re.sub(r"^(?:thought\n)+", "", text)
         # gpt-oss-20b outputs chain-of-thought followed by "assistantfinal<answer>"
         # or "assistantcommentary to=functions...". Extract only the final answer.
         # For assistantfinal: use rfind to get the definitive last output.

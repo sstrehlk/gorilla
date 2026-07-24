@@ -21,6 +21,15 @@ _CALL_PATTERN = re.compile(
     re.DOTALL,
 )
 
+# EXPERIMENTAL (not present in OVMS's Gemma4ToolParser - see
+# agents/pending_bfcl_fixes_proposals.md section 2): some observed model
+# outputs use empty parentheses instead of empty braces for zero-argument
+# calls, e.g. 'call:ls()' instead of 'call:ls{}'. OVMS's parser requires a
+# literal '{' and fails to parse this form too, so accepting it here is a
+# deliberate divergence from OVMS parity, kept isolated on this experimental
+# branch only.
+_CALL_PATTERN_EMPTY_PARENS = re.compile(r"call:([\w.]+)\(\)")
+
 # Matches a single key:value pair inside a call body.
 # Values may be:
 #   - Gemma-quoted strings:  <|"|>...<|"|>
@@ -98,4 +107,11 @@ def parse(text: str) -> list[dict]:
         body = match.group(2)
         arguments = _parse_body(body)
         tool_calls.append(make_tool_call(function_name, arguments, len(tool_calls)))
+    if not tool_calls:
+        # EXPERIMENTAL fallback for zero-argument calls written with empty
+        # parentheses instead of empty braces (see comment on
+        # _CALL_PATTERN_EMPTY_PARENS above).
+        for match in _CALL_PATTERN_EMPTY_PARENS.finditer(text):
+            function_name = match.group(1)
+            tool_calls.append(make_tool_call(function_name, {}, len(tool_calls)))
     return tool_calls

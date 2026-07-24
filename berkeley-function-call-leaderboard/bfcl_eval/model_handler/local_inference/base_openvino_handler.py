@@ -250,9 +250,16 @@ class BaseOpenVINOHandler(BaseHandler, EnforceOverrides):
         # start/end token IDs (see OVMS's Gemma4ReasoningParser). Those tokens
         # are silently dropped during detokenization, so the only visible
         # leftover is a literal "thought\n" line-prefix (sometimes doubled)
-        # at the very start of the text. Strip it so it doesn't leak into the
-        # final answer/tool-call text.
-        text = re.sub(r"^(?:thought\n)+", "", text)
+        # near the very start of the text. Tolerate a small amount of leading
+        # garbage (e.g. corrupted/garbled tokens produced by GPU-side
+        # degeneration) before the marker, bounded to 20 characters so we
+        # don't accidentally strip legitimate content that happens to contain
+        # this substring further into the response.
+        # EXPERIMENTAL: broadened from a strict `^` anchor - see
+        # agents/pending_bfcl_fixes_proposals.md section 1 for the rationale
+        # and the risk trade-off (approximates OVMS's token-boundary-based
+        # Gemma4ReasoningParser via a text heuristic; not a faithful port).
+        text = re.sub(r"^.{0,20}?(?:thought\n)+", "", text, count=1, flags=re.DOTALL)
         # gpt-oss-20b outputs chain-of-thought followed by "assistantfinal<answer>"
         # or "assistantcommentary to=functions...". Extract only the final answer.
         # For assistantfinal: use rfind to get the definitive last output.

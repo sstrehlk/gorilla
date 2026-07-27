@@ -1,6 +1,10 @@
 {#-
   Modifications to original chat template:
-    * Ignoring "response" field from tool definition (it was broken, but also it is inline now with other servings)
+    * Restored the "response" field handling from the original template (previously
+      dropped entirely because it could crash when a tool's "response" schema was not
+      a well-formed mapping). Instead of dropping the feature, we now guard it with
+      `is mapping`/`is string` checks so malformed schemas are safely skipped while
+      normal schemas render the same as the unmodified original template.
 #}
 {%- macro format_parameters(properties, required, filter_keys=false) -%}
     {%- set standard_keys = ['description', 'type', 'properties', 'required', 'nullable'] -%}
@@ -105,6 +109,16 @@
         {%- endif -%}
         {%- if params['type'] -%}
             type:<|"|>{{- params['type'] | upper -}}<|"|>}
+        {%- endif -%}
+    {%- endif -%}
+    {%- if 'response' in tool_data['function'] and tool_data['function']['response'] is mapping -%}
+        {%- set response_declaration = tool_data['function']['response'] -%}
+        ,response:{
+        {%- if response_declaration['description'] is string -%}
+            description:<|"|>{{- response_declaration['description'] -}}<|"|>,
+        {%- endif -%}
+        {%- if response_declaration['type'] is string and response_declaration['type'] | upper == 'OBJECT' -%}
+            type:<|"|>{{- response_declaration['type'] | upper -}}<|"|>}
         {%- endif -%}
     {%- endif -%}
     }

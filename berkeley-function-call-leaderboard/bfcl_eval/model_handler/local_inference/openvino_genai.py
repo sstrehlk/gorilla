@@ -74,8 +74,24 @@ class OpenVINOGenAIHandler(BaseOpenVINOHandler):
         # Detect VLM models by presence of vision embeddings model file
         is_vlm = os.path.exists(os.path.join(model_path, "openvino_vision_embeddings_model.xml"))
         if is_vlm:
-            print(f"[INFO] Vision model detected. Using VLMPipeline. device_properties={device_properties}")
-            self._pipeline = openvino_genai.VLMPipeline(model_path, device, **device_properties)
+            # Use ContinuousBatchingPipeline directly instead of VLMPipeline.
+            # VLMPipeline's own prompt/embedding handling produces different
+            # generation results than OVMS's serving engine even with an
+            # identical (byte-for-byte, same token IDs) prompt and greedy
+            # decoding - verified by a direct A/B test on multi_turn_base_0's
+            # turn-0 request for gemma-4-26b-a4b-it: VLMPipeline (with or
+            # without a scheduler_config) diverges from OVMS at the very first
+            # generated tool-name token, while ContinuousBatchingPipeline used
+            # directly (the same underlying pipeline class OVMS uses for its
+            # "Visual Language Model Continuous Batching" servable) matches
+            # OVMS's output exactly and reproducibly. Text-only (no image)
+            # inputs are supported via the plain str overload of generate().
+            print(f"[INFO] Vision model detected. Using ContinuousBatchingPipeline. device_properties={device_properties}")
+            scheduler_config = openvino_genai.SchedulerConfig()
+            scheduler_config.enable_prefix_caching = True
+            self._pipeline = openvino_genai.ContinuousBatchingPipeline(
+                model_path, scheduler_config, device, device_properties
+            )
             self._is_vlm = True
             return
 
@@ -118,7 +134,13 @@ class OpenVINOGenAIHandler(BaseOpenVINOHandler):
         # budget was exhausted on every turn. Basing off get_generation_config()
         # preserves the model's eos_token_id/stop_token_ids (and sampling
         # defaults) while we still override what we need below.
-        config = self._pipeline.get_generation_config()
+        # ContinuousBatchingPipeline (used for VLM models, see _load_model) exposes
+        # this via get_config() rather than get_generation_config().
+        config = (
+            self._pipeline.get_config()
+            if getattr(self, "_is_vlm", False)
+            else self._pipeline.get_generation_config()
+        )
         config.max_new_tokens = max_new_tokens
         # `formatted_prompt` is already a fully rendered chat-template string
         # (built via self.tokenizer.apply_chat_template in _query_FC/_format_prompt).
@@ -138,9 +160,12 @@ class OpenVINOGenAIHandler(BaseOpenVINOHandler):
             config.do_sample = False
 
         if getattr(self, "_is_vlm", False):
-            # VLMPipeline: text-only inference (no images)
-            result = self._pipeline.generate(formatted_prompt, generation_config=config)
-            return str(result)
+            # ContinuousBatchingPipeline: text-only inference (no images).
+            # The plain str overload of generate() returns a list[GenerationResult];
+            # for this (text prompt in, not encoded input_ids) overload, m_generation_ids
+            # already holds the decoded text candidate(s), not token ids.
+            results = self._pipeline.generate(formatted_prompt, config)
+            return results[0].m_generation_ids[0]
 
         # LLMPipeline.generate returns a str with only the newly generated text
         return self._pipeline.generate(formatted_prompt, config)

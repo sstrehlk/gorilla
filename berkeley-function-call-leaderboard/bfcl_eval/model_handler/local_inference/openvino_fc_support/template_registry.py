@@ -17,6 +17,16 @@ def _template_name_for_model(model_path: str) -> str | None:
 
 
 def apply_openvino_fc_chat_template(tokenizer, model_path: str) -> None:
+    # Prefer the model's own chat_template.jinja. AutoTokenizer.from_pretrained
+    # already auto-discovers and loads a chat_template.jinja file from the model
+    # directory into tokenizer.chat_template, so if that happened we must NOT
+    # override it with our own bundled copy - the model-provided template is the
+    # authoritative one for this model. Only fall back to our own bundled
+    # per-model template when the model directory doesn't ship a
+    # chat_template.jinja at all.
+    if tokenizer.chat_template:
+        return
+
     template_name = _template_name_for_model(model_path)
     if template_name is None:
         return

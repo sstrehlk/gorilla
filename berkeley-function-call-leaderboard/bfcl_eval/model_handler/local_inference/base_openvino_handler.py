@@ -370,9 +370,13 @@ class BaseOpenVINOHandler(BaseHandler, EnforceOverrides):
             # in model_server/demos/continuous_batching/accuracy/gorilla.patch). A much
             # larger budget (previously 16384) let occasional degenerate/repetitive
             # generations run for a very long time before being cut off.
-            max_new_tokens = min(
-                2048,
-                self.max_context_length - input_token_count - 2,
+            # max(1, ...): when max_context_length == input_token_count + 2 exactly,
+            # this would otherwise compute to 0, which openvino_genai.GenerationConfig
+            # rejects ("'max_new_tokens' must be greater than 0") unless echo is set,
+            # crashing the whole test case.
+            max_new_tokens = max(
+                1,
+                min(2048, self.max_context_length - input_token_count - 2),
             )
 
         start_time = time.time()
@@ -487,7 +491,10 @@ class BaseOpenVINOHandler(BaseHandler, EnforceOverrides):
             # Cap at 2048 tokens to match OVMS's own BFCL test setup (see
             # OpenAICompletionsHandler.max_completion_tokens in
             # model_server/demos/continuous_batching/accuracy/gorilla.patch).
-            max_new_tokens = min(2048, self.max_context_length - input_token_count - 2)
+            # max(1, ...): avoid computing exactly 0 at the max_context_length ==
+            # input_token_count + 2 boundary, which openvino_genai.GenerationConfig
+            # rejects and crashes the whole test case.
+            max_new_tokens = max(1, min(2048, self.max_context_length - input_token_count - 2))
 
         start_time = time.time()
         generated_text = self._generate(formatted_prompt, max_new_tokens)

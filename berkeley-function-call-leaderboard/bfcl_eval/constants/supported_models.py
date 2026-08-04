@@ -190,5 +190,6 @@ SUPPORTED_MODELS = [
     "openvino-optimum",
     "openvino-genai",
     "openvino-genai-FC",
+    "openvino-genai-vlm-FC",
     "openvino-optimum-FC",
 ]

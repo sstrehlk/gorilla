@@ -69,7 +69,10 @@ from bfcl_eval.model_handler.local_inference.salesforce_qwen import (
 )
 from bfcl_eval.model_handler.local_inference.think_agent import ThinkAgentHandler
 from bfcl_eval.model_handler.local_inference.openvino_optimum import OpenVINOOptimumHandler
-from bfcl_eval.model_handler.local_inference.openvino_genai import OpenVINOGenAIHandler
+from bfcl_eval.model_handler.local_inference.openvino_genai import (
+    OpenVINOGenAIHandler,
+    OpenVINOGenAIVLMHandler,
+)
 
 # -----------------------------------------------------------------------------
 # A mapping of model identifiers to their respective model configurations.
@@ -2226,7 +2229,7 @@ third_party_inference_model_map = {
         underscore_to_dot=False,
     ),
     "openvino-genai-FC": ModelConfig(
-        model_name="openvino-genai",
+        model_name="openvino-genai-FC",
         display_name="OpenVINO (openvino-genai, FC)",
         url="https://github.com/openvinotoolkit/openvino.genai",
         org="OpenVINO",
@@ -2237,8 +2240,20 @@ third_party_inference_model_map = {
         is_fc_model=True,
         underscore_to_dot=False,
     ),
+    "openvino-genai-vlm-FC": ModelConfig(
+        model_name="openvino-genai-vlm-FC",
+        display_name="OpenVINO (openvino-genai, VLMPipeline, FC)",
+        url="https://github.com/openvinotoolkit/openvino.genai",
+        org="OpenVINO",
+        license="apache-2.0",
+        model_handler=OpenVINOGenAIVLMHandler,
+        input_price=None,
+        output_price=None,
+        is_fc_model=True,
+        underscore_to_dot=False,
+    ),
     "openvino-optimum-FC": ModelConfig(
-        model_name="openvino-optimum",
+        model_name="openvino-optimum-FC",
         display_name="OpenVINO (optimum-intel, FC)",
         url="https://github.com/huggingface/optimum-intel",
         org="OpenVINO",

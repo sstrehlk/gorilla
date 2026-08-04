@@ -169,3 +169,60 @@ class OpenVINOGenAIHandler(BaseOpenVINOHandler):
 
         # LLMPipeline.generate returns a str with only the newly generated text
         return self._pipeline.generate(formatted_prompt, config)
+
+
+class OpenVINOGenAIVLMHandler(OpenVINOGenAIHandler):
+    """
+    Same as ``OpenVINOGenAIHandler``, but drives VLM models through
+    ``openvino_genai.VLMPipeline`` instead of ``ContinuousBatchingPipeline``.
+
+    Both pipeline classes are legitimate ways to run a VLM checkpoint through
+    openvino-genai, and empirically they can disagree with each other (and with
+    OVMS) on the same prompt/greedy-decoding config - see
+    tmp/jira_repro_ticket.md for a minimal reproduction. This handler exists so
+    both code paths can be run side by side (registry name
+    ``openvino-genai-vlm-FC``) against identical testplans/datasets for
+    accuracy comparison, without having to hand-edit the CB-based handler.
+
+    Non-VLM models fall back to the parent class's LLMPipeline behavior
+    unchanged.
+    """
+
+    @override
+    def _load_model(
+        self, model_path: str, device: str = "CPU", device_properties: Optional[dict] = None
+    ) -> None:
+        import openvino_genai
+        import os
+
+        device_properties = device_properties or {}
+
+        is_vlm = os.path.exists(os.path.join(model_path, "openvino_vision_embeddings_model.xml"))
+        if not is_vlm:
+            super()._load_model(model_path, device, device_properties)
+            return
+
+        print(f"[INFO] Vision model detected. Using VLMPipeline. device_properties={device_properties}")
+        self._pipeline = openvino_genai.VLMPipeline(model_path, device, **device_properties)
+        self._is_vlm = True
+
+    @override
+    def _generate(self, formatted_prompt: str, max_new_tokens: int) -> str:
+        if not getattr(self, "_is_vlm", False):
+            return super()._generate(formatted_prompt, max_new_tokens)
+
+        config = self._pipeline.get_generation_config()
+        config.max_new_tokens = max_new_tokens
+        # See OpenVINOGenAIHandler._generate: prompt is already fully rendered,
+        # so the pipeline must not apply the chat template a second time.
+        config.apply_chat_template = False
+
+        if self.temperature > 0.01:
+            config.temperature = self.temperature
+            config.do_sample = True
+        else:
+            config.do_sample = False
+
+        # Text-only inference (no images/videos) for BFCL FC test entries.
+        result = self._pipeline.generate(formatted_prompt, images=[], generation_config=config)
+        return result.texts[0]

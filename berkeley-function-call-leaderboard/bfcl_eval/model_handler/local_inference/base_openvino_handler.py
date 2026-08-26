@@ -115,6 +115,15 @@ class BaseOpenVINOHandler(BaseHandler, EnforceOverrides):
 
         if hasattr(config, "max_position_embeddings"):
             self.max_context_length = config.max_position_embeddings
+        elif hasattr(config, "text_config") and hasattr(
+            config.text_config, "max_position_embeddings"
+        ):
+            # Multimodal configs (e.g. gemma-4's Gemma4Config) nest the text
+            # decoder's own max_position_embeddings under text_config instead of
+            # exposing it top-level - without this branch every such model fell
+            # through to the 4096 fallback below (gemma-4-26b-a4b-it's real value
+            # is 262144), silently starving max_new_tokens on long conversations.
+            self.max_context_length = config.text_config.max_position_embeddings
         elif (
             self.tokenizer.model_max_length is not None
             and self.tokenizer.model_max_length < 1_000_000

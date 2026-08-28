@@ -14,8 +14,8 @@ from bfcl_eval.model_handler.local_inference.openvino_fc_support.template_regist
 from jinja2.sandbox import ImmutableSandboxedEnvironment
 from overrides import override
 
-# Passed via --ov-config as {"chat_template_source": "gguf"|"model_dir"|"bundled"}.
-_CHAT_TEMPLATE_SOURCES = ("gguf", "model_dir", "bundled")
+# Passed via --ov-config as {"chat_template_source": "gguf"|"model_dir"|"bfcl"}.
+_CHAT_TEMPLATE_SOURCES = ("gguf", "model_dir", "bfcl")
 
 
 def _raise_exception(message: str):
@@ -72,7 +72,7 @@ class LlamaCppTokenizerAdapter:
     pointed at the same ``chat_template.jinja`` file ``openvino-genai-FC``/
     ``openvino-genai-vlm-FC`` use (``"model_dir"``), for exact template parity with
     those handlers, or forced to this repo's bundled per-model fallback template
-    (``"bundled"``). Whichever source is picked, rendering itself goes through a
+    (``"bfcl"``). Whichever source is picked, rendering itself goes through a
     minimal jinja2 sandboxed environment (mirroring HF's ``apply_chat_template()``
     globals/filters, see ``_compile_chat_template``), NOT an HF tokenizer.
 
@@ -94,7 +94,7 @@ class LlamaCppTokenizerAdapter:
                 raise ValueError(
                     f"chat_template_source='gguf' but '{gguf_path}' has no "
                     "'tokenizer.chat_template' metadata. Use chat_template_source="
-                    "'model_dir' or 'bundled' via --ov-config instead."
+                    "'model_dir' or 'bfcl' via --ov-config instead."
                 )
             return template
 
@@ -104,19 +104,18 @@ class LlamaCppTokenizerAdapter:
             if os.path.isfile(candidate):
                 with open(candidate, encoding="utf-8") as template_file:
                     return template_file.read()
-            bundled = find_bundled_chat_template(model_path)
-            if bundled is not None:
-                return bundled
+
             raise FileNotFoundError(
                 f"chat_template_source='model_dir' but no chat_template.jinja found in "
-                f"'{model_dir}' and no bundled fallback template matches '{model_path}'."
+                f"'{model_dir}'. Use chat_template_source='bfcl' via --ov-config "
+                "if you want this repo's bundled per-model fallback template instead."
             )
 
-        # source == "bundled"
+        # source == "bfcl"
         bundled = find_bundled_chat_template(model_path)
         if bundled is None:
             raise ValueError(
-                f"chat_template_source='bundled' but no bundled template matches '{model_path}'."
+                f"chat_template_source='bfcl' but no bundled template matches '{model_path}'."
             )
         return bundled
 
@@ -222,7 +221,7 @@ class LlamaCppHandler(BaseOpenVINOHandler):
     The generic ``--ov-config`` JSON/flat-dict mechanism (parsed by
     ``BaseOpenVINOHandler._parse_ov_config``) is reused here for:
       - ``chat_template_source``: ``"gguf"`` (default), ``"model_dir"``, or
-        ``"bundled"`` (see ``LlamaCppTokenizerAdapter``).
+        ``"bfcl"`` (see ``LlamaCppTokenizerAdapter``).
       - Any remaining keys are passed straight through as ``llama_cpp.Llama``
         constructor kwargs, e.g. ``{"n_ctx": 16384, "n_gpu_layers": -1,
         "n_threads": 8}``. Defaults:

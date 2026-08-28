@@ -10,8 +10,9 @@ from bfcl_eval.model_handler.base_handler import BaseHandler
 from bfcl_eval.model_handler.local_inference.openvino_fc_support.parser_registry import (
     parse_openvino_fc_response,
 )
-from bfcl_eval.model_handler.local_inference.openvino_fc_support.template_registry import (
-    apply_openvino_fc_chat_template,
+from bfcl_eval.model_handler.local_inference.tokenizer_adapters import (
+    HFTokenizerAdapter,
+    TokenizerAdapter,
 )
 from bfcl_eval.model_handler.utils import (
     convert_to_function_call,
@@ -37,10 +38,14 @@ class BaseOpenVINOHandler(BaseHandler, EnforceOverrides):
     Subclasses must implement:
       - _load_model(model_path, device)  – load the backend-specific model
       - _generate(formatted_prompt, max_new_tokens) -> str  – run inference
-      - _format_prompt(messages, function) -> str  – (optional) build the prompt string
 
-    The default _format_prompt uses the tokenizer's apply_chat_template, which works
-    for most instruction-tuned models. Override it for custom formatting.
+    Tokenization and chat-template rendering are NOT part of that subclass
+    contract - they're delegated (composition, not inheritance) to a
+    ``TokenizerAdapter`` instance, selected via the ``_create_tokenizer_adapter()``
+    factory method (default: ``HFTokenizerAdapter``, using
+    ``transformers.AutoTokenizer``). Backends without an HF tokenizer (e.g.
+    ``LlamaCppHandler``) just override that factory to return their own adapter
+    instead of overriding any pipeline internals. See ``tokenizer_adapters.py``.
     """
 
     def __init__(
@@ -54,8 +59,20 @@ class BaseOpenVINOHandler(BaseHandler, EnforceOverrides):
         super().__init__(model_name, temperature, registry_name, is_fc_model, **kwargs)
         self.model_name_huggingface = model_name
         self.model_style = ModelStyle.OSSMODEL
-        self.tokenizer = None
+        self._tokenizer_adapter: TokenizerAdapter = self._create_tokenizer_adapter()
         self.max_context_length: Optional[int] = None
+        # Mirrors OVMS's TRACE-level "Raw model output" log (output_parser.cpp),
+        # which decodes generated tokens with skip_special_tokens=False. Opt-in via
+        # env var since it's noisy over a full 200-case run.
+        self._log_raw_text = os.environ.get("BFCL_OPENVINO_LOG_RAW_TEXT", "").lower() in (
+            "1",
+            "true",
+            "yes",
+        )
+
+    def _log_raw_generation(self, generated_text: str) -> None:
+        if self._log_raw_text:
+            print(f"[RAW MODEL OUTPUT] {generated_text!r}")
 
     # ------------------------------------------------------------------
     # Inference entry-point (prompting only, no FC server mode)
@@ -95,51 +112,33 @@ class BaseOpenVINOHandler(BaseHandler, EnforceOverrides):
                 matching ``openvino_device`` (or its device family, e.g. "GPU" for "GPU.0")
                 are extracted and passed to ``_load_model`` as ``device_properties``.
         """
-        from transformers import AutoConfig, AutoTokenizer
-
         model_path = (
             local_model_path if local_model_path is not None else self.model_name_huggingface
         )
-
-        load_kwargs: dict = {
-            "pretrained_model_name_or_path": model_path,
-            "trust_remote_code": True,
-        }
-        if local_model_path is not None:
-            load_kwargs["local_files_only"] = True
-
-        self.tokenizer = AutoTokenizer.from_pretrained(**load_kwargs)
-        config = AutoConfig.from_pretrained(**load_kwargs)
         self.model_path = model_path
-        apply_openvino_fc_chat_template(self.tokenizer, model_path)
 
-        if hasattr(config, "max_position_embeddings"):
-            self.max_context_length = config.max_position_embeddings
-        elif hasattr(config, "text_config") and hasattr(
-            config.text_config, "max_position_embeddings"
-        ):
-            # Multimodal configs (e.g. gemma-4's Gemma4Config) nest the text
-            # decoder's own max_position_embeddings under text_config instead of
-            # exposing it top-level - without this branch every such model fell
-            # through to the 4096 fallback below (gemma-4-26b-a4b-it's real value
-            # is 262144), silently starving max_new_tokens on long conversations.
-            self.max_context_length = config.text_config.max_position_embeddings
-        elif (
-            self.tokenizer.model_max_length is not None
-            and self.tokenizer.model_max_length < 1_000_000
-        ):
-            self.max_context_length = self.tokenizer.model_max_length
-        else:
-            self.max_context_length = 4096  # safe fallback
-
-        print(f"Max context length: {self.max_context_length}")
-
+        # Parsed before tokenizer loading (not just before `_load_model`) so the
+        # adapter can also read backend-specific knobs out of `device_properties`
+        # (e.g. LlamaCppTokenizerAdapter's `chat_template_source`), popping them out
+        # before the same dict reaches `_load_model`.
         device_properties = self._parse_ov_config(ov_config, openvino_device)
         if device_properties:
             print(f"Applying OpenVINO device properties for {openvino_device}: {device_properties}")
 
+        self._tokenizer_adapter.load(model_path, local_model_path, device_properties)
+        self.max_context_length = self._tokenizer_adapter.max_context_length
+        print(f"Max context length: {self.max_context_length}")
+
         self._load_model(model_path, device=openvino_device, device_properties=device_properties)
         print(f"OpenVINO model loaded on device: {openvino_device}")
+
+    @property
+    def tokenizer(self):
+        """Raw underlying tokenizer object, if the active ``TokenizerAdapter`` exposes
+        one (``HFTokenizerAdapter`` does, for handlers like ``OpenVINOOptimumHandler``
+        that need direct HF-tokenizer access beyond the ``TokenizerAdapter``
+        interface). ``None`` for adapters that don't have one (e.g. llama.cpp)."""
+        return getattr(self._tokenizer_adapter, "tokenizer", None)
 
     @staticmethod
     def _parse_ov_config(ov_config: Optional[str], device: str) -> dict:
@@ -179,11 +178,18 @@ class BaseOpenVINOHandler(BaseHandler, EnforceOverrides):
     def shutdown_local_server(self) -> None:
         """Release model resources (mirrors the OSSHandler interface)."""
         self._unload_model()
-        self.tokenizer = None
+        self._tokenizer_adapter.unload()
 
     # ------------------------------------------------------------------
     # Abstract interface for subclasses
     # ------------------------------------------------------------------
+
+    def _create_tokenizer_adapter(self) -> TokenizerAdapter:
+        """Factory for this handler's ``TokenizerAdapter`` (composition point - see
+        the class docstring). Default: ``HFTokenizerAdapter``. Override to select a
+        different adapter, e.g. ``LlamaCppHandler`` -> ``LlamaCppTokenizerAdapter``.
+        """
+        return HFTokenizerAdapter()
 
     def _load_model(
         self, model_path: str, device: str = "CPU", device_properties: Optional[dict] = None
@@ -216,12 +222,11 @@ class BaseOpenVINOHandler(BaseHandler, EnforceOverrides):
 
     def _format_prompt(self, messages: list[dict], function: list[dict]) -> str:  # noqa: ARG002
         """
-        Build the full prompt string from the messages list.
-
-        The default implementation uses the tokenizer's built-in chat template
-        (identical to QuickTestingOSSHandler).  Override this method in subclasses
-        that need custom prompt construction.  The ``function`` argument is available
-        for subclasses that embed function docs directly into the prompt.
+        Build the full prompt string from the messages list, via the
+        ``TokenizerAdapter``'s ``render_prompt`` (identical to QuickTestingOSSHandler).
+        Override this method in subclasses that need custom prompt construction. The
+        ``function`` argument is available for subclasses that embed function docs
+        directly into the prompt.
 
         In prompting mode the assistant response is plain text (no structured
         ``tool_calls``), so some chat templates (e.g. Mistral) raise a
@@ -237,9 +242,7 @@ class BaseOpenVINOHandler(BaseHandler, EnforceOverrides):
                 )
             else:
                 sanitized_messages.append(msg)
-        return self.tokenizer.apply_chat_template(
-            sanitized_messages, add_generation_prompt=True, tokenize=False
-        )
+        return self._tokenizer_adapter.render_prompt(sanitized_messages)
 
     # ------------------------------------------------------------------
     # Decoding helpers (prompting mode)
@@ -368,7 +371,7 @@ class BaseOpenVINOHandler(BaseHandler, EnforceOverrides):
         formatted_prompt: str = self._format_prompt(message, function)
         inference_data["inference_input_log"] = {"formatted_prompt": formatted_prompt}
 
-        input_token_count = len(self.tokenizer.tokenize(formatted_prompt))
+        input_token_count = self._tokenizer_adapter.count_tokens(formatted_prompt)
 
         if self.max_context_length < input_token_count + 2:
             # Prompt already exceeds context window; request a minimal budget
@@ -391,8 +394,9 @@ class BaseOpenVINOHandler(BaseHandler, EnforceOverrides):
         start_time = time.time()
         generated_text = self._generate(formatted_prompt, max_new_tokens)
         latency = time.time() - start_time
+        self._log_raw_generation(generated_text)
 
-        output_token_count = len(self.tokenizer.tokenize(generated_text))
+        output_token_count = self._tokenizer_adapter.count_tokens(generated_text)
 
         return (
             {
@@ -479,21 +483,11 @@ class BaseOpenVINOHandler(BaseHandler, EnforceOverrides):
         tools: list[dict] = inference_data.get("tools", [])
         inference_data["inference_input_log"] = {"message": repr(message), "tools": tools}
 
-        try:
-            formatted_prompt: str = self.tokenizer.apply_chat_template(
-                message,
-                tools=tools if tools else None,
-                add_generation_prompt=True,
-                tokenize=False,
-                enable_thinking=False,
-            )
-        except Exception:
-            # Fallback: template does not support tools – render without
-            formatted_prompt = self.tokenizer.apply_chat_template(
-                message, add_generation_prompt=True, tokenize=False
-            )
+        formatted_prompt: str = self._tokenizer_adapter.render_chat_prompt(
+            message, tools, enable_thinking=False
+        )
 
-        input_token_count = len(self.tokenizer.tokenize(formatted_prompt))
+        input_token_count = self._tokenizer_adapter.count_tokens(formatted_prompt)
         if self.max_context_length < input_token_count + 2:
             max_new_tokens = 1000
         else:
@@ -508,8 +502,9 @@ class BaseOpenVINOHandler(BaseHandler, EnforceOverrides):
         start_time = time.time()
         generated_text = self._generate(formatted_prompt, max_new_tokens)
         latency = time.time() - start_time
+        self._log_raw_generation(generated_text)
 
-        output_token_count = len(self.tokenizer.tokenize(generated_text))
+        output_token_count = self._tokenizer_adapter.count_tokens(generated_text)
 
         return (
             {

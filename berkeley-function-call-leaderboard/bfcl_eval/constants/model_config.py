@@ -73,6 +73,7 @@ from bfcl_eval.model_handler.local_inference.openvino_genai import (
     OpenVINOGenAIHandler,
     OpenVINOGenAIVLMHandler,
 )
+from bfcl_eval.model_handler.local_inference.llama_cpp_handler import LlamaCppHandler
 
 # -----------------------------------------------------------------------------
 # A mapping of model identifiers to their respective model configurations.
@@ -2247,6 +2248,18 @@ third_party_inference_model_map = {
         org="OpenVINO",
         license="apache-2.0",
         model_handler=OpenVINOGenAIVLMHandler,
+        input_price=None,
+        output_price=None,
+        is_fc_model=True,
+        underscore_to_dot=False,
+    ),
+    "llamacpp-FC": ModelConfig(
+        model_name="llamacpp-FC",
+        display_name="GGUF (llama-cpp-python, FC)",
+        url="https://github.com/abetlen/llama-cpp-python",
+        org="llama.cpp",
+        license="apache-2.0",
+        model_handler=LlamaCppHandler,
         input_price=None,
         output_price=None,
         is_fc_model=True,

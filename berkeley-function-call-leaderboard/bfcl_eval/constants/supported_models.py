@@ -192,4 +192,5 @@ SUPPORTED_MODELS = [
     "openvino-genai-FC",
     "openvino-genai-vlm-FC",
     "openvino-optimum-FC",
+    "llamacpp-FC",
 ]

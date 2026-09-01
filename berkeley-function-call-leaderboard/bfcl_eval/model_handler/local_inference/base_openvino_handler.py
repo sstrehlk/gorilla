@@ -119,8 +119,9 @@ class BaseOpenVINOHandler(BaseHandler, EnforceOverrides):
 
         # Parsed before tokenizer loading (not just before `_load_model`) so the
         # adapter can also read backend-specific knobs out of `device_properties`
-        # (e.g. LlamaCppTokenizerAdapter's `chat_template_source`), popping them out
-        # before the same dict reaches `_load_model`.
+        # (e.g. `chat_template_source`, used by both `HFTokenizerAdapter` and
+        # `LlamaCppTokenizerAdapter`), popping them out before the same dict
+        # reaches `_load_model`.
         device_properties = self._parse_ov_config(ov_config, openvino_device)
         if device_properties:
             print(f"Applying OpenVINO device properties for {openvino_device}: {device_properties}")

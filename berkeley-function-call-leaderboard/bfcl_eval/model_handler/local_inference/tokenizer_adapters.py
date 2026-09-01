@@ -1,8 +1,11 @@
 from typing import Optional, Protocol, runtime_checkable
 
 from bfcl_eval.model_handler.local_inference.openvino_fc_support.template_registry import (
-    apply_openvino_fc_chat_template,
+    find_bfcl_chat_template,
 )
+
+# Passed via --ov-config as {"chat_template_source": "model_dir"|"bfcl"}.
+_HF_CHAT_TEMPLATE_SOURCES = ("model_dir", "bfcl")
 
 
 @runtime_checkable
@@ -52,6 +55,13 @@ class HFTokenizerAdapter:
     ``_tokenizer_adapter_cls`` (``OpenVINOGenAIHandler``, ``OpenVINOGenAIVLMHandler``,
     ``OpenVINOOptimumHandler``).
 
+    The chat template is selectable via ``chat_template_source`` (read out of the
+    ``device_properties`` dict passed to ``load()``, i.e. via ``--ov-config``):
+    ``"model_dir"`` (default) requires ``AutoTokenizer.from_pretrained`` to have
+    auto-discovered a ``chat_template.jinja``/``tokenizer_config.json``-embedded
+    template in the model directory; ``"bfcl"`` forces this repo's own bundled
+    per-model template instead, overriding whatever ``model_dir`` shipped.
+
     The raw ``tokenizer`` attribute (a real HF ``PreTrainedTokenizerBase``) is kept
     public for handlers that need lower-level access beyond this adapter's interface
     (e.g. ``OpenVINOOptimumHandler._generate`` calls ``self.tokenizer(...)``/
@@ -63,9 +73,16 @@ class HFTokenizerAdapter:
         self.max_context_length: int = 4096
 
     def load(
-        self, model_path: str, local_model_path: Optional[str], device_properties: dict  # noqa: ARG002
+        self, model_path: str, local_model_path: Optional[str], device_properties: dict
     ) -> None:
         from transformers import AutoConfig, AutoTokenizer
+
+        chat_template_source = device_properties.pop("chat_template_source", "model_dir")
+        if chat_template_source not in _HF_CHAT_TEMPLATE_SOURCES:
+            raise ValueError(
+                f"Invalid chat_template_source '{chat_template_source}'. "
+                f"Must be one of {_HF_CHAT_TEMPLATE_SOURCES}."
+            )
 
         load_kwargs: dict = {
             "pretrained_model_name_or_path": model_path,
@@ -76,7 +93,8 @@ class HFTokenizerAdapter:
 
         self.tokenizer = AutoTokenizer.from_pretrained(**load_kwargs)
         config = AutoConfig.from_pretrained(**load_kwargs)
-        apply_openvino_fc_chat_template(self.tokenizer, model_path)
+        self._apply_chat_template_source(chat_template_source, model_path)
+        print(f"[INFO] Chat template source: {chat_template_source}")
 
         if hasattr(config, "max_position_embeddings"):
             self.max_context_length = config.max_position_embeddings
@@ -99,6 +117,25 @@ class HFTokenizerAdapter:
 
     def count_tokens(self, text: str) -> int:
         return len(self.tokenizer.tokenize(text))
+
+    def _apply_chat_template_source(self, chat_template_source: str, model_path: str) -> None:
+        if chat_template_source == "model_dir":
+            if not self.tokenizer.chat_template:
+                raise FileNotFoundError(
+                    f"chat_template_source='model_dir' but '{model_path}' has no "
+                    "chat template (no chat_template.jinja / tokenizer_config.json "
+                    "'chat_template' key found by AutoTokenizer). Use "
+                    "chat_template_source='bfcl' via --ov-config instead."
+                )
+            return
+
+        # chat_template_source == "bfcl"
+        bfcl_template = find_bfcl_chat_template(model_path)
+        if bfcl_template is None:
+            raise ValueError(
+                f"chat_template_source='bfcl' but no bfcl template matches '{model_path}'."
+            )
+        self.tokenizer.chat_template = bfcl_template
 
     def render_prompt(self, messages: list[dict]) -> str:
         return self.tokenizer.apply_chat_template(

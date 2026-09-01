@@ -9,7 +9,7 @@ from bfcl_eval.model_handler.local_inference.base_openvino_handler import (
     BaseOpenVINOHandler,
 )
 from bfcl_eval.model_handler.local_inference.openvino_fc_support.template_registry import (
-    find_bundled_chat_template,
+    find_bfcl_chat_template,
 )
 from jinja2.sandbox import ImmutableSandboxedEnvironment
 from overrides import override
@@ -71,7 +71,7 @@ class LlamaCppTokenizerAdapter:
     file itself (``tokenizer.chat_template`` GGUF metadata key), but can instead be
     pointed at the same ``chat_template.jinja`` file ``openvino-genai-FC``/
     ``openvino-genai-vlm-FC`` use (``"model_dir"``), for exact template parity with
-    those handlers, or forced to this repo's bundled per-model fallback template
+    those handlers, or forced to this repo's own bfcl per-model fallback template
     (``"bfcl"``). Whichever source is picked, rendering itself goes through a
     minimal jinja2 sandboxed environment (mirroring HF's ``apply_chat_template()``
     globals/filters, see ``_compile_chat_template``), NOT an HF tokenizer.
@@ -108,16 +108,16 @@ class LlamaCppTokenizerAdapter:
             raise FileNotFoundError(
                 f"chat_template_source='model_dir' but no chat_template.jinja found in "
                 f"'{model_dir}'. Use chat_template_source='bfcl' via --ov-config "
-                "if you want this repo's bundled per-model fallback template instead."
+                "if you want this repo's own bfcl per-model fallback template instead."
             )
 
         # source == "bfcl"
-        bundled = find_bundled_chat_template(model_path)
-        if bundled is None:
+        bfcl_template = find_bfcl_chat_template(model_path)
+        if bfcl_template is None:
             raise ValueError(
-                f"chat_template_source='bfcl' but no bundled template matches '{model_path}'."
+                f"chat_template_source='bfcl' but no bfcl template matches '{model_path}'."
             )
-        return bundled
+        return bfcl_template
 
     def load(
         self, model_path: str, local_model_path: Optional[str], device_properties: dict  # noqa: ARG002
@@ -212,8 +212,8 @@ class LlamaCppHandler(BaseOpenVINOHandler):
     ``--local-model-path`` must point to a directory containing exactly one
     ``*.gguf`` file (or point directly at the ``.gguf`` file itself). No HF
     tokenizer/config files are required. If ``chat_template_source="model_dir"``
-    is used, that directory (or its bundled-template fallback, see
-    ``openvino_fc_support/template_registry.find_bundled_chat_template``) must also
+    is used, that directory (or its bfcl-template fallback, see
+    ``openvino_fc_support/template_registry.find_bfcl_chat_template``) must also
     contain a ``chat_template.jinja`` file.
 
     ``--ov-config`` knobs

@@ -16,12 +16,10 @@ def _template_name_for_model(model_path: str) -> str | None:
     return None
 
 
-def find_bundled_chat_template(model_path: str) -> str | None:
-    """Return the bundled per-model chat template text for `model_path`, or None if
-    no bundled template matches. This is the fallback branch of
-    `apply_openvino_fc_chat_template`, exposed separately so tokenizer-less backends
-    (e.g. LlamaCppHandler) can resolve the same template without an HF tokenizer
-    object."""
+def find_bfcl_chat_template(model_path: str) -> str | None:
+    """Return this repo's own `"bfcl"` per-model chat template text for
+    `model_path`, or None if no `bfcl` template matches. Used by both
+    `HFTokenizerAdapter` and `LlamaCppTokenizerAdapter`."""
     template_name = _template_name_for_model(model_path)
     if template_name is None:
         return None
@@ -31,19 +29,3 @@ def find_bundled_chat_template(model_path: str) -> str | None:
         return None
 
     return template_path.read_text(encoding="utf-8")
-
-
-def apply_openvino_fc_chat_template(tokenizer, model_path: str) -> None:
-    # Prefer the model's own chat_template.jinja. AutoTokenizer.from_pretrained
-    # already auto-discovers and loads a chat_template.jinja file from the model
-    # directory into tokenizer.chat_template, so if that happened we must NOT
-    # override it with our own bundled copy - the model-provided template is the
-    # authoritative one for this model. Only fall back to our own bundled
-    # per-model template when the model directory doesn't ship a
-    # chat_template.jinja at all.
-    if tokenizer.chat_template:
-        return
-
-    bundled = find_bundled_chat_template(model_path)
-    if bundled is not None:
-        tokenizer.chat_template = bundled

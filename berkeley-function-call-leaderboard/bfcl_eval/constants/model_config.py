@@ -2277,6 +2277,24 @@ third_party_inference_model_map = {
         is_fc_model=True,
         underscore_to_dot=False,
     ),
+    # -------------------------------------------------------------------------
+    # llama.cpp llama-server (OpenAI-compatible HTTP API)
+    # -------------------------------------------------------------------------
+    # Talks to a running `llama-server` instance over its OpenAI-compatible
+    # REST API. Set OPENAI_BASE_URL to the server's /v1 endpoint.
+    # -------------------------------------------------------------------------
+    "llamacpp-model": ModelConfig(
+        model_name="llamacpp-model",
+        display_name="llamacpp-model",
+        url="https://github.com/ggml-org/llama.cpp",
+        org="llama.cpp",
+        license="apache-2.0",
+        model_handler=OpenAICompletionsHandler,
+        input_price=None,
+        output_price=None,
+        is_fc_model=True,
+        underscore_to_dot=True,
+    ),
     # Via Qwen Agent Framework
     "qwen3-4b-think-FC": ModelConfig(
         model_name="qwen3-4b-think-FC",
